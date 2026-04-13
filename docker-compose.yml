@@ -1,0 +1,51 @@
+version: '3.9'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: uma-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    env_file: .env
+    environment:
+      MONGO_INITDB_DATABASE: universal_media_archive
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh -u $$MONGO_INITDB_ROOT_USERNAME -p $$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval \"db.adminCommand('ping')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: uma-backend
+    ports:
+      - "5000:5000"
+    env_file: .env
+    environment:
+      DB_NAME: universal_media_archive
+      FLASK_ENV: production
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: gunicorn -w 2 --max-requests 500 --max-requests-jitter 50 -b 0.0.0.0:5000 app:app
+
+  frontend:
+    image: nginx:alpine
+    container_name: uma-frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:

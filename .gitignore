@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+*.egg-info/
+
+# Environments
+.env
+
+# Database/Cache data
+mongo-data/
+data/
+cache/
+
+# OS Files
+.DS_Store
+Thumbs.db
