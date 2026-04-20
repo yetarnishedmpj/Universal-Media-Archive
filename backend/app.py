@@ -4,9 +4,11 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from pymongo import MongoClient, TEXT
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import sys
+import random
+import math
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -39,18 +41,27 @@ try:
     media_col.drop_index("title_text_genres_text_tags_text_description_text")
 except Exception:
     pass
-media_col.create_index([("title", TEXT), ("genres", TEXT), ("tags", TEXT), ("description", TEXT)])
+media_col.create_index([(("title", TEXT)), ("genres", TEXT), ("tags", TEXT), ("description", TEXT)])
 media_col.create_index("type")
 media_col.create_index("release_year")
 media_col.create_index("genres")
-media_col.create_index("added_at", expireAfterSeconds=2592000) # 30 Days TTL
+media_col.create_index("view_count")
 reviews_col.create_index([("media_id", 1), ("user_id", 1)])
+
+
+def to_oid(id_str):
+    """Safely convert string to ObjectId, returns None if invalid"""
+    try:
+        return ObjectId(id_str) if ObjectId.is_valid(id_str) else None
+    except Exception:
+        return None
 
 
 def serialize(doc):
     if doc is None:
         return None
-    doc["_id"] = str(doc["_id"])
+    if "_id" in doc:
+        doc["_id"] = str(doc["_id"])
     for k, v in doc.items():
         if isinstance(v, ObjectId):
             doc[k] = str(v)
@@ -68,10 +79,12 @@ def serialize_list(docs):
 def root():
     return jsonify({
         "name": "Universal Media Archive API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "endpoints": ["/media", "/search", "/review", "/reviews/<media_id>",
                       "/users", "/recommendations", "/analytics/trending",
                       "/analytics/searches", "/analytics/genres", "/analytics/types",
+                      "/analytics/dashboard", "/analytics/activity",
+                      "/ai/recommend", "/ai/similar/<media_id>",
                       "/timecapsule/<decade>", "/genres", "/health"]
     })
 
@@ -79,7 +92,8 @@ def root():
 # ─── HEALTH ───
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "db": DB_NAME})
+    total = media_col.count_documents({})
+    return jsonify({"status": "ok", "db": DB_NAME, "total_items": total})
 
 
 # ─── MEDIA ───
@@ -91,7 +105,7 @@ def add_media():
         if f not in data:
             return jsonify({"error": f"Missing required field: {f}"}), 400
 
-    valid_types = ["movie", "book", "song", "game", "show", "video", "comic", "podcast"]
+    valid_types = ["movie", "book", "song", "game", "show", "video", "comic"]
     if data["type"] not in valid_types:
         return jsonify({"error": f"Invalid type. Must be one of {valid_types}"}), 400
 
@@ -109,7 +123,8 @@ def add_media():
         "tags": data.get("tags", []),
         "related": data.get("related", []),
         "added_at": datetime.utcnow(),
-        "view_count": 0,
+        "view_count": data.get("view_count", 0),
+        "ai_score": 0.0,
     }
     result = media_col.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
@@ -145,6 +160,8 @@ def get_media():
         "title": [("title", 1)],
         "year": [("release_year", -1)],
         "views": [("view_count", -1)],
+        "rating": [("ratings.imdb", -1)],
+        "ai_score": [("ai_score", -1)],
     }
     sort_order = sort_map.get(sort_by, [("added_at", -1)])
     total = media_col.count_documents(query)
@@ -161,32 +178,42 @@ def get_media():
 
 @app.route("/media/<media_id>", methods=["GET"])
 def get_media_detail(media_id):
-    try:
-        doc = media_col.find_one_and_update(
-            {"_id": ObjectId(media_id)},
-            {"$inc": {"view_count": 1}},
-            return_document=True
-        )
-    except Exception:
+    oid = to_oid(media_id)
+    if not oid:
         return jsonify({"error": "Invalid media ID"}), 400
+
+    doc = media_col.find_one_and_update(
+        {"_id": oid},
+        {"$inc": {"view_count": 1}},
+        return_document=True
+    )
 
     if not doc:
         return jsonify({"error": "Media not found"}), 404
 
+    # Fetch reviews
     reviews = list(reviews_col.find({"media_id": media_id}))
     doc["reviews"] = serialize_list(reviews)
 
-    related_ids = [r.get("media_id") for r in doc.get("related", []) if r.get("media_id")]
-    related_docs = []
-    for rid in related_ids[:6]:
-        try:
-            rel = media_col.find_one({"_id": ObjectId(rid)})
-            if rel:
-                related_docs.append(serialize(rel))
-        except Exception:
-            pass
-    doc["related_media"] = related_docs
+    # Efficient batch fetch for related media
+    rel_entries = doc.get("related", [])
+    rel_ids = [to_oid(r.get("media_id")) for r in rel_entries if r.get("media_id")]
+    rel_ids = [i for i in rel_ids if i][:6] # Limit to 6
 
+    if rel_ids:
+        related_docs = list(media_col.find({"_id": {"$in": rel_ids}}))
+        # Keep original order if possible
+        id_map = {str(d["_id"]): d for d in related_docs}
+        ordered_related = []
+        for rid in rel_ids:
+            srid = str(rid)
+            if srid in id_map:
+                ordered_related.append(serialize(id_map[srid]))
+        doc["related_media"] = ordered_related
+    else:
+        doc["related_media"] = []
+
+    # Update hourly analytics
     analytics_col.update_one(
         {"media_id": media_id, "date": datetime.utcnow().strftime("%Y-%m-%d")},
         {"$inc": {"views": 1}},
@@ -197,17 +224,24 @@ def get_media_detail(media_id):
 
 @app.route("/media/<media_id>", methods=["PUT"])
 def update_media(media_id):
-    try:
-        data = request.json
-        data.pop("_id", None)
-        result = media_col.update_one({"_id": ObjectId(media_id)}, {"$set": data})
-    except Exception:
+    oid = to_oid(media_id)
+    if not oid:
         return jsonify({"error": "Invalid media ID"}), 400
+
+    data = request.json
+    data.pop("_id", None)
+    result = media_col.update_one({"_id": oid}, {"$set": data})
+
     if result.matched_count == 0:
         return jsonify({"error": "Media not found"}), 404
     return jsonify({"message": "Updated successfully"})
 
-from utils.vidking import get_vidking_source
+
+try:
+    from utils.vidking import get_vidking_source
+    HAS_VIDKING = True
+except ImportError:
+    HAS_VIDKING = False
 
 @app.route("/get_stream/<media_id>")
 def get_stream(media_id):
@@ -219,19 +253,14 @@ def get_stream(media_id):
     if not item:
         return {"error": "Not found"}, 404
 
-    # ✅ CACHE
     if item.get("stream"):
         return {"sources": [item["stream"]]}
 
-    # 🔥 SCRAPE HERE (ONLY HERE)
-    sources = get_vidking_source(item["title"])
-
-    if sources:
-        media_col.update_one(
-            {"_id": item["_id"]},
-            {"$set": {"stream": sources[0]}}
-        )
-        return {"sources": sources}
+    if HAS_VIDKING:
+        sources = get_vidking_source(item["title"])
+        if sources:
+            media_col.update_one({"_id": item["_id"]}, {"$set": {"stream": sources[0]}})
+            return {"sources": sources}
 
     return {
         "fallback": f"https://www.vidking.net/search?q={item['title'].replace(' ', '+')}"
@@ -240,10 +269,10 @@ def get_stream(media_id):
 
 @app.route("/media/<media_id>", methods=["DELETE"])
 def delete_media(media_id):
-    try:
-        result = media_col.delete_one({"_id": ObjectId(media_id)})
-    except Exception:
+    oid = to_oid(media_id)
+    if not oid:
         return jsonify({"error": "Invalid media ID"}), 400
+    result = media_col.delete_one({"_id": oid})
     if result.deleted_count == 0:
         return jsonify({"error": "Media not found"}), 404
     return jsonify({"message": "Deleted successfully"})
@@ -280,7 +309,7 @@ def search():
         query["release_year"] = yr
 
     projection = None
-    sort_order = [("added_at", -1)]
+    sort_order = [("view_count", -1)]
     if q:
         projection = {"score": {"$meta": "textScore"}}
         sort_order = [("score", {"$meta": "textScore"})]
@@ -404,7 +433,186 @@ def add_to_history(user_id):
     return jsonify({"message": "Added to history"})
 
 
-# ─── RECOMMENDATIONS ───
+# ─── AI RECOMMENDATIONS ENGINE ───
+def compute_ai_score(item, genre_weights, type_boost, trending_ids):
+    """
+    Weighted scoring: genre affinity (35%) + popularity (25%) + recency (15%) + type boost (10%) + imdb (15%)
+    """
+    score = 0.0
+    genres = item.get("genres", [])
+    if genres:
+        genre_score = sum(genre_weights.get(g, 0) for g in genres) / len(genres)
+        score += genre_score * 0.35
+
+    view_count = item.get("view_count", 0)
+    score += min(view_count / 5000.0, 1.0) * 0.25
+
+    release_year = item.get("release_year")
+    if release_year:
+        # Logistic decay for older movies
+        recency = 1 / (1 + math.exp(-0.1 * (release_year - 2000)))
+        score += recency * 0.15
+
+    if type_boost and item.get("type") == type_boost:
+        score += 0.1
+
+    if str(item.get("_id", "")) in trending_ids:
+        score += 0.15
+
+    imdb = item.get("ratings", {}).get("imdb")
+    if imdb:
+        score += (float(imdb) / 10.0) * 0.15
+
+    return round(score, 4)
+
+
+@app.route("/ai/recommend", methods=["GET"])
+def ai_recommend():
+    """Advanced AI recommendation with weighted scoring"""
+    genres = request.args.getlist("genre")
+    media_type = request.args.get("type")
+    exclude_ids = request.args.getlist("exclude")
+    limit = int(request.args.get("limit", 12))
+    strategy = request.args.get("strategy", "hybrid")  # hybrid, trending, discovery
+
+    # Build genre weights from analytics (popularity-weighted)
+    genre_pipeline = [
+        {"$unwind": "$genres"},
+        {"$group": {"_id": "$genres", "total_views": {"$sum": "$view_count"}, "count": {"$sum": 1}}},
+        {"$sort": {"total_views": -1}},
+        {"$limit": 50}
+    ]
+    genre_stats = list(media_col.aggregate(genre_pipeline))
+    max_views = max((g["total_views"] for g in genre_stats), default=1) or 1
+    genre_weights = {g["_id"]: g["total_views"] / max_views for g in genre_stats}
+
+    # Boost requested genres
+    for g in genres:
+        genre_weights[g] = genre_weights.get(g, 0) + 2.0
+
+    # Get trending IDs for scoring boost
+    trending = list(media_col.find({}, {"_id": 1}).sort("view_count", -1).limit(20))
+    trending_ids = {str(t["_id"]) for t in trending}
+
+    # Query
+    query = {}
+    if media_type:
+        query["type"] = media_type
+    if genres:
+        query["genres"] = {"$in": genres}
+    if exclude_ids:
+        try:
+            query["_id"] = {"$nin": [ObjectId(i) for i in exclude_ids if ObjectId.is_valid(i)]}
+        except Exception:
+            pass
+
+    # Fetch candidates
+    if strategy == "discovery":
+        # Less popular items for discovery mode
+        candidates = list(media_col.find(query).sort("view_count", 1).limit(limit * 5))
+    elif strategy == "trending":
+        candidates = list(media_col.find(query).sort("view_count", -1).limit(limit * 3))
+    else:
+        # Hybrid: mix of popular and diverse
+        top = list(media_col.find(query).sort("view_count", -1).limit(limit * 2))
+        recent = list(media_col.find(query).sort("added_at", -1).limit(limit * 2))
+        seen = set()
+        candidates = []
+        for item in top + recent:
+            k = str(item["_id"])
+            if k not in seen:
+                seen.add(k)
+                candidates.append(item)
+
+    # Score all candidates
+    scored = []
+    for item in candidates:
+        s = compute_ai_score(item, genre_weights, media_type, trending_ids)
+        item["_ai_score"] = s
+        scored.append(item)
+
+    scored.sort(key=lambda x: x["_ai_score"], reverse=True)
+    top_items = scored[:limit]
+
+    result = serialize_list(top_items)
+    for r, s in zip(result, [x["_ai_score"] for x in top_items]):
+        r["ai_confidence"] = round(min(s * 100, 99.9), 1)
+
+    return jsonify({
+        "data": result,
+        "strategy": strategy,
+        "genre_weights": {k: round(v, 3) for k, v in list(genre_weights.items())[:10]},
+        "total_candidates": len(candidates),
+    })
+
+
+@app.route("/ai/similar/<media_id>", methods=["GET"])
+def ai_similar(media_id):
+    """Find similar items using content-based filtering"""
+    try:
+        source = media_col.find_one({"_id": ObjectId(media_id)})
+    except Exception:
+        return jsonify({"error": "Invalid ID"}), 400
+
+    if not source:
+        return jsonify({"error": "Not found"}), 404
+
+    limit = int(request.args.get("limit", 8))
+    source_genres = set(source.get("genres", []))
+    source_type = source.get("type")
+    source_year = source.get("release_year", 2000)
+    source_tags = set(source.get("tags", []))
+
+    candidates = list(media_col.find(
+        {"_id": {"$ne": ObjectId(media_id)}},
+    ).limit(500))
+
+    scored = []
+    for item in candidates:
+        score = 0.0
+        item_genres = set(item.get("genres", []))
+        item_tags = set(item.get("tags", []))
+        item_year = item.get("release_year", 2000)
+
+        # Genre overlap (Jaccard similarity)
+        union = source_genres | item_genres
+        intersection = source_genres & item_genres
+        if union:
+            score += (len(intersection) / len(union)) * 0.5
+
+        # Tag overlap
+        tag_union = source_tags | item_tags
+        tag_intersection = source_tags & item_tags
+        if tag_union:
+            score += (len(tag_intersection) / len(tag_union)) * 0.2
+
+        # Same type boost
+        if item.get("type") == source_type:
+            score += 0.15
+
+        # Era proximity
+        year_diff = abs((item_year or 2000) - (source_year or 2000))
+        era_sim = max(0, 1 - year_diff / 50)
+        score += era_sim * 0.1
+
+        # Popularity
+        score += min((item.get("view_count", 0) / 1000.0), 0.5) * 0.05
+
+        item["_sim_score"] = round(score, 4)
+        scored.append(item)
+
+    scored.sort(key=lambda x: x["_sim_score"], reverse=True)
+    result = serialize_list(scored[:limit])
+    for r, s in zip(result, [x["_sim_score"] for x in scored[:limit]]):
+        r["similarity"] = round(s * 100, 1)
+
+    return jsonify({
+        "source": serialize(source),
+        "similar": result
+    })
+
+
+# ─── RECOMMENDATIONS (legacy) ───
 @app.route("/recommendations", methods=["GET"])
 def get_recommendations():
     user_id = request.args.get("user_id")
@@ -439,7 +647,11 @@ def get_recommendations():
 @app.route("/analytics/trending", methods=["GET"])
 def trending():
     limit = int(request.args.get("limit", 10))
-    items = list(media_col.find().sort("view_count", -1).limit(limit))
+    media_type = request.args.get("type")
+    query = {}
+    if media_type:
+        query["type"] = media_type
+    items = list(media_col.find(query).sort("view_count", -1).limit(limit))
     return jsonify({"data": serialize_list(items)})
 
 
@@ -454,22 +666,198 @@ def top_searches():
 def genre_breakdown():
     pipeline = [
         {"$unwind": "$genres"},
-        {"$group": {"_id": "$genres", "count": {"$sum": 1}}},
+        {"$group": {"_id": "$genres", "count": {"$sum": 1}, "total_views": {"$sum": "$view_count"}}},
         {"$sort": {"count": -1}},
         {"$limit": 20}
     ]
     result = list(media_col.aggregate(pipeline))
-    return jsonify({"data": [{"genre": r["_id"], "count": r["count"]} for r in result]})
+    return jsonify({"data": [{"genre": r["_id"], "count": r["count"], "total_views": r.get("total_views", 0)} for r in result]})
 
 
 @app.route("/analytics/types", methods=["GET"])
 def type_breakdown():
     pipeline = [
-        {"$group": {"_id": "$type", "count": {"$sum": 1}}},
+        {"$group": {
+            "_id": "$type",
+            "count": {"$sum": 1},
+            "total_views": {"$sum": "$view_count"},
+            "avg_rating": {"$avg": "$ratings.imdb"}
+        }},
         {"$sort": {"count": -1}}
     ]
     result = list(media_col.aggregate(pipeline))
-    return jsonify({"data": [{"type": r["_id"], "count": r["count"]} for r in result]})
+    return jsonify({"data": [{
+        "type": r["_id"],
+        "count": r["count"],
+        "total_views": r.get("total_views", 0),
+        "avg_rating": round(r["avg_rating"], 1) if r.get("avg_rating") else None
+    } for r in result]})
+
+
+@app.route("/analytics/dashboard", methods=["GET"])
+def dashboard():
+    """Comprehensive dashboard stats endpoint"""
+    total = media_col.count_documents({})
+    total_views = list(media_col.aggregate([{"$group": {"_id": None, "sum": {"$sum": "$view_count"}}}]))
+    total_views = total_views[0]["sum"] if total_views else 0
+
+    total_reviews = reviews_col.count_documents({})
+
+    # Type breakdown
+    type_pipeline = [
+        {"$group": {"_id": "$type", "count": {"$sum": 1}, "views": {"$sum": "$view_count"}}},
+        {"$sort": {"count": -1}}
+    ]
+    types = list(media_col.aggregate(type_pipeline))
+
+    # Genre breakdown (top 15)
+    genre_pipeline = [
+        {"$unwind": "$genres"},
+        {"$group": {"_id": "$genres", "count": {"$sum": 1}, "views": {"$sum": "$view_count"}}},
+        {"$sort": {"views": -1}},
+        {"$limit": 15}
+    ]
+    genres = list(media_col.aggregate(genre_pipeline))
+
+    # Year distribution
+    year_pipeline = [
+        {"$match": {"release_year": {"$ne": None, "$gt": 1900}}},
+        {"$group": {"_id": {"$subtract": ["$release_year", {"$mod": ["$release_year", 10]}]},
+                    "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    years = list(media_col.aggregate(year_pipeline))
+
+    # Top 5 trending
+    top_trending = list(media_col.find({}, {
+        "title": 1, "type": 1, "view_count": 1, "thumbnail": 1, "ratings": 1
+    }).sort("view_count", -1).limit(5))
+
+    # Top searches
+    top_searches = list(analytics_col.find({"type": "search"}).sort("count", -1).limit(5))
+
+    # Recently added
+    recently_added = list(media_col.find({}, {
+        "title": 1, "type": 1, "added_at": 1, "thumbnail": 1
+    }).sort("added_at", -1).limit(5))
+
+    # Average ratings by type
+    rating_pipeline = [
+        {"$match": {"ratings.imdb": {"$ne": None}}},
+        {"$group": {"_id": "$type", "avg_imdb": {"$avg": "$ratings.imdb"}, "count": {"$sum": 1}}},
+        {"$sort": {"avg_imdb": -1}}
+    ]
+    ratings_by_type = list(media_col.aggregate(rating_pipeline))
+
+    # Unique genres count
+    all_genres = list(media_col.aggregate([
+        {"$unwind": "$genres"},
+        {"$group": {"_id": "$genres"}}
+    ]))
+
+    return jsonify({
+        "overview": {
+            "total_items": total,
+            "total_views": total_views,
+            "total_reviews": total_reviews,
+            "unique_genres": len(all_genres),
+            "media_types": len(types),
+        },
+        "types": [{"type": t["_id"], "count": t["count"], "views": t.get("views", 0)} for t in types],
+        "genres": [{"genre": g["_id"], "count": g["count"], "views": g.get("views", 0)} for g in genres],
+        "year_distribution": [{"decade": y["_id"], "count": y["count"]} for y in years],
+        "top_trending": serialize_list(top_trending),
+        "top_searches": serialize_list(top_searches),
+        "recently_added": serialize_list(recently_added),
+        "ratings_by_type": [{"type": r["_id"], "avg_imdb": round(r["avg_imdb"], 1), "count": r["count"]} for r in ratings_by_type],
+    })
+
+
+@app.route("/analytics/activity", methods=["GET"])
+def activity_feed():
+    """
+    Enhanced real-time activity feed simulation.
+    Returns richer event details: user metadata, location, device, and event duration.
+    """
+    limit = int(request.args.get("limit", 20))
+
+    # Fetch recent active items
+    recent_items = list(media_col.find({}, {
+        "title": 1, "type": 1, "view_count": 1, "thumbnail": 1, "genres": 1
+    }).sort("view_count", -1).limit(60))
+
+    if not recent_items:
+        return jsonify({"events": []})
+
+    locations = ["Coruscant", "Tatooine", "Naboo", "Hoth", "Endor", "Bespin", "Alderaan", "Kamino", "Dagobah", "Mustafar"]
+    devices = ["Holocron", "Comm-Link", "Datapad", "Terminal", "Neural-Link", "Starship Console"]
+    user_ranks = ["Padawan", "Jedi Knight", "Jedi Master", "Archivist", "Scholar", "Historian", "Council Member"]
+    
+    action_types = [
+        ("viewed", 0.40, "icon_eye"),
+        ("searched", 0.15, "icon_search"),
+        ("rated", 0.10, "icon_star"),
+        ("collected", 0.12, "icon_box"),
+        ("shared", 0.08, "icon_share"),
+        ("downloaded", 0.05, "icon_download"),
+        ("translated", 0.10, "icon_globe")
+    ]
+
+    events = []
+    now = datetime.utcnow()
+    
+    # Simulate a "Hot Trend" item
+    viral_item = random.choice(recent_items) if recent_items else None
+    
+    for i in range(limit):
+        # 30% chance for the "Hot Trend" item to appear in the feed
+        item = viral_item if (viral_item and random.random() < 0.3) else random.choice(recent_items)
+        
+        # Weighted random action
+        r = random.random()
+        cumul = 0
+        action, icon = "viewed", "icon_eye"
+        for act, prob, ic in action_types:
+            cumul += prob
+            if r < cumul:
+                action, icon = act, ic
+                break
+        
+        minutes_ago = random.randint(0, 180)
+        timestamp = (now - timedelta(minutes=minutes_ago))
+        
+        user_id = random.randint(1100, 9999)
+        events.append({
+            "id": f"evt_{i}_{timestamp.timestamp()}",
+            "action": action,
+            "action_icon": icon,
+            "media_id": str(item["_id"]),
+            "title": item["title"],
+            "type": item["type"],
+            "thumbnail": item.get("thumbnail", ""),
+            "genres": item.get("genres", [])[:2],
+            "timestamp": timestamp.isoformat(),
+            "user": {
+                "name": f"User-{user_id}",
+                "rank": random.choice(user_ranks),
+                "location": random.choice(locations),
+                "device": random.choice(devices),
+                "avatar_seed": user_id
+            },
+            "metadata": {
+                "duration_min": random.randint(1, 120) if action == "viewed" else None,
+                "rating": random.randint(7, 10) if action == "rated" else None,
+                "sector": f"Sector-{random.randint(1, 24)}"
+            }
+        })
+
+    events.sort(key=lambda x: x["timestamp"], reverse=True)
+    return jsonify({
+        "events": events, 
+        "generated_at": now.isoformat(),
+        "active_node": "Coruscant-Main-Server",
+        "load_factor": round(random.uniform(0.1, 0.4), 2)
+    })
 
 
 # ─── TIME CAPSULE ───
