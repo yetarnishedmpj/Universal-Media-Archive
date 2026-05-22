@@ -1,52 +1,72 @@
-# Universal Media Archive
+# Universal Media Archive v2.0.0
 
 Universal Media Archive is a full-stack web application inspired by the preservation-first spirit of the Internet Archive. It does **not** host copyrighted media. Instead, it stores rich metadata, relationships, user activity, and external source links so people can discover movies, shows, books, comics, songs, games, and online videos from one place.
 
-## Stack
-
-- Backend: FastAPI
-- Database: MongoDB
-- Frontend: Server-rendered HTML with CSS and vanilla JavaScript
-- Data model: Unified `media` schema with type-specific `attributes`
-
 ## Features
 
-- Unified media catalog across movies, books, comics, songs, games, shows, and videos
-- MongoDB text search on title, genres, and tags
-- Filtering by media type, genre, release year, tag, and source platform
-- Pagination for archive browsing
-- Dashboard summary with archive metrics, top genres, top platforms, and recent review activity
-- Curated archive collections for adaptations, preservation, playable stories, and more
-- Detailed media pages with metadata, related entities, reviews, and external access links
-- Knowledge-graph endpoint for relationship mapping around each media entity
-- Recommendation engine based on user preferences plus watch/history signals
-- Watchlist and history tracking for demo users
-- Archive Mode toggle for a denser, metadata-first browsing layout
-- Time Capsule browsing by decade
-- Expanded seed data with 39 media entries, 7 users, and 21 reviews for quick testing
-- Deploy-ready containerization with Docker, Compose, health checks, and Render configuration
+- **v2.0.0 Upgrades**: 
+    - **VidKing Streaming Integration**: Scrapes legitimate streaming sources for instant playback (requires Playwright).
+    - **Real-World Data Sync**: Automated background sync from TMDB (Movies/Shows), RAWG (Games), Spotify (Music), OpenLibrary (Books/Comics), and YouTube (Videos).
+    - **Advanced AI Recommendations**: Weighted scoring based on genre affinity, popularity, recency (logistic decay), and relationship mapping.
+- **Unified Media Catalog**: Single search index across all media formats.
+- **MongoDB Text Search**: Full-text indexing on title, genres, and tags.
+- **Archive Mode**: Dense, metadata-first browsing layout for power users.
+- **Time Capsule**: Decade-based exploration of media history.
+- **Media Graph**: Knowledge-graph relationship mapping (adaptations, companions, etc.).
+- **Dashboard Analytics**: Real-time stats on media mix, trending content, and platform coverage.
+- **Deploy-Ready**: Full Docker support with Playwright dependencies included.
 
-## Folder Structure
+## Stack
 
-```text
-universal-media-archive/
-|-- app/
-|   |-- api/
-|   |-- core/
-|   |-- db/
-|   |-- services/
-|   |-- static/
-|   |-- templates/
-|   `-- main.py
-|-- scripts/
-|-- .dockerignore
-|-- .env.example
-|-- Dockerfile
-|-- docker-compose.yml
-|-- render.yaml
-|-- requirements.txt
-`-- README.md
+- **Backend**: FastAPI (Python 3.12)
+- **Database**: MongoDB 7.0
+- **Frontend**: Server-rendered Jinja2 Templates with vanilla JS/CSS
+- **Scraping**: Playwright (for VidKing integration)
+- **Data model**: Unified schema with cross-format relationships
+
+## Setup
+
+### 1. Environment Configuration
+
+Copy `.env.example` to `.env` and provide your API keys for real-world data sync:
+- `TMDB_API_KEY`
+- `RAWG_API_KEY`
+- `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`
+- `YOUTUBE_API_KEY`
+
+### 2. Docker Setup (Recommended)
+
+The easiest way to run v2.0.0 is via Docker, as it handles the Playwright system dependencies.
+
+```powershell
+docker compose up --build
 ```
+
+### 3. Manual Installation
+
+If running locally:
+
+```powershell
+pip install -r requirements.txt
+playwright install --with-deps chromium
+uvicorn app.main:app --reload
+```
+
+## Real-World Data Sync
+
+To trigger a manual data synchronization from external APIs:
+
+```powershell
+python scripts/sync_data.py --once
+```
+
+## API Endpoints (New in v2.0.0)
+
+- `GET /media/{id}/stream` -> Scrapes and returns direct streaming sources via VidKing.
+- `GET /recommendations` -> Now uses the v2.0.0 AI scoring engine.
+- `GET /health` -> Enhanced connectivity and version check.
+
+...
 
 ## MongoDB Collections
 
