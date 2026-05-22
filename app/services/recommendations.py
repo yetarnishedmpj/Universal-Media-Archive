@@ -1,11 +1,45 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from bson import ObjectId
 from pymongo.database import Database
 
 from app.services.media_service import normalize_token, serialize_media
+
+
+def compute_ai_score(
+    item: dict[str, Any],
+    genre_weights: dict[str, float],
+    media_type_boost: str | None,
+) -> float:
+    """
+    Weighted scoring: genre affinity (35%) + popularity (25%) + recency (15%) + type boost (10%) + imdb (15%)
+    """
+    score = 0.0
+    genres = item.get("genres", [])
+    if genres:
+        genre_score = sum(genre_weights.get(normalize_token(g), 0.5) for g in genres) / len(genres)
+        score += genre_score * 0.35
+
+    popularity = item.get("popularity_score", 0)
+    score += min(popularity / 1000.0, 1.0) * 0.25
+
+    release_year = item.get("release_year")
+    if release_year and isinstance(release_year, int):
+        # Logistic decay for older movies (centered around 2010)
+        recency = 1 / (1 + math.exp(-0.1 * (release_year - 2010)))
+        score += recency * 0.15
+
+    if media_type_boost and item.get("type") == media_type_boost:
+        score += 0.1
+
+    imdb = item.get("ratings", {}).get("imdb")
+    if imdb:
+        score += (float(imdb) / 10.0) * 0.15
+
+    return round(score, 4)
 
 
 def get_trending_media(db: Database, limit: int) -> list[dict[str, Any]]:
@@ -56,38 +90,34 @@ def build_recommendations(
     }
     history_media_ids = {document["_id"] for document in history_documents}
 
-    candidates = list(db.media.find({"_id": {"$nin": list(excluded_ids)}}))
+    candidates = list(db.media.find({"_id": {"$nin": list(excluded_ids)}}).sort("popularity_score", -1).limit(200))
+    
+    # Simple genre weights based on user preferences
+    genre_weights = {term: 2.0 for term in preference_terms}
+    for g in history_genres:
+        genre_weights[g] = genre_weights.get(g, 1.0) + 1.0
+
     scored_items: list[tuple[float, dict[str, Any]]] = []
 
     for document in candidates:
-        genres = {normalize_token(genre) for genre in document.get("genres", [])}
-        tags = {normalize_token(tag) for tag in document.get("tags", [])}
-        creators = {normalize_token(creator) for creator in document.get("creators", [])}
+        score = compute_ai_score(document, genre_weights, None)
+        
+        # Boost if related to history
         related_targets = {
             relation.get("media_id")
             for relation in document.get("related", [])
             if relation.get("media_id") is not None
         }
-
-        score = document.get("popularity_score", 0) / 20
-        score += len((preference_terms | history_genres) & genres) * 2.8
-        score += len((preference_terms | history_tags) & tags) * 2.0
-        score += len(history_creators & creators) * 1.5
         if history_media_ids & related_targets:
-            score += 3.5
+            score += 0.2
 
-        if score > 0 or not preference_terms:
-            scored_items.append((score, document))
+        scored_items.append((score, document))
 
     if not scored_items:
         return get_trending_media(db, limit)
 
     scored_items.sort(
-        key=lambda item: (
-            item[0],
-            item[1].get("popularity_score", 0),
-            item[1].get("release_year", 0),
-        ),
+        key=lambda item: item[0],
         reverse=True,
     )
     return [serialize_media(document) for _, document in scored_items[:limit]]

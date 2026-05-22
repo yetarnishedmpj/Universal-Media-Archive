@@ -48,6 +48,7 @@ from app.services.media_service import (
     unique_preserving_order,
     update_media_user_rating,
 )
+from app.services.vidking_service import get_vidking_sources
 from app.services.recommendations import build_recommendations
 
 router = APIRouter()
@@ -251,6 +252,30 @@ def media_detail(media_id: str, db: Database = Depends(get_database)) -> MediaDe
     payload["reviews"] = [ReviewResponse(**serialize_review(document)) for document in review_documents]
     payload["related_items"] = [MediaResponse(**serialize_media(document)) for document in related_documents]
     return MediaDetailResponse(**payload)
+
+
+@router.get("/media/{media_id}/stream")
+def media_stream(media_id: str, db: Database = Depends(get_database)) -> dict[str, Any]:
+    media = get_media_or_404(db, media_id)
+    
+    # Check if we already have a stream source
+    existing_streams = [s for s in media.get("sources", []) if s.get("platform") == "vidking"]
+    if existing_streams:
+        return {"sources": existing_streams}
+    
+    # Attempt to scrape
+    new_sources = get_vidking_sources(media["title"])
+    if new_sources:
+        db.media.update_one(
+            {"_id": media["_id"]},
+            {"$push": {"sources": {"$each": new_sources}}}
+        )
+        return {"sources": new_sources}
+    
+    return {
+        "fallback": f"https://www.vidking.net/search?q={media['title'].replace(' ', '+')}",
+        "sources": []
+    }
 
 
 @router.get("/media/{media_id}/graph", response_model=MediaGraphResponse)

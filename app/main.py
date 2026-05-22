@@ -25,7 +25,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="A metadata-rich archive for discovering media across formats.",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
     docs_url="/docs" if settings.enable_docs else None,
     redoc_url="/redoc" if settings.enable_docs else None,
