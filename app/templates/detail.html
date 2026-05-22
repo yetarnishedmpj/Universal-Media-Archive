@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Detailed archive view for a Universal Media Archive media entity.">
+    <title>{{ app_name }} | Media Detail</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body data-page="detail" data-media-id="{{ media_id }}">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-kicker">Back to the archive</span>
+            <strong>{{ app_name }}</strong>
+        </a>
+        <nav class="topnav" aria-label="Primary">
+            <a href="/">Catalog</a>
+            <a href="/#collections-section">Collections</a>
+            <a href="/#analytics-section">Analytics</a>
+        </nav>
+        <div class="topbar-actions">
+            <button id="archive-toggle" class="toggle-button" type="button" aria-pressed="false">Archive Mode</button>
+        </div>
+    </header>
+
+    <main class="shell detail-shell">
+        <a class="back-link" href="/">Return to archive home</a>
+
+        <section id="detail-hero" class="detail-masthead panel">
+            <div class="loading-state">Loading archive record...</div>
+        </section>
+
+        <section class="detail-columns">
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">Archive actions</p>
+                        <h2>Track and annotate this record</h2>
+                    </div>
+                </div>
+
+                <div class="action-panel">
+                    <label class="field-label" for="detail-user-select">Choose a demo user</label>
+                    <select id="detail-user-select">
+                        <option value="">Select a user</option>
+                    </select>
+                    <div class="button-row">
+                        <button id="watchlist-button" type="button">Add to watchlist</button>
+                        <button id="history-button" type="button">Mark as accessed</button>
+                        <button id="share-button" class="secondary-button" type="button">Copy link</button>
+                    </div>
+                </div>
+
+                <form id="review-form" class="review-form">
+                    <label class="field-label" for="review-rating">Rating</label>
+                    <input id="review-rating" type="number" min="0" max="10" step="0.1" value="8.5">
+                    <label class="field-label" for="review-comment">Comment</label>
+                    <textarea id="review-comment" rows="5" placeholder="Add a review, annotation, or preservation note."></textarea>
+                    <button type="submit">Submit review</button>
+                </form>
+            </section>
+
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">External access</p>
+                        <h2>Where this media lives</h2>
+                    </div>
+                </div>
+                <div id="source-list" class="source-list"></div>
+            </section>
+        </section>
+
+        <section class="detail-columns">
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">Metadata ledger</p>
+                        <h2>Attributes and archive details</h2>
+                    </div>
+                </div>
+                <div id="attribute-list" class="attribute-list"></div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">Knowledge graph</p>
+                        <h2>Relationship map</h2>
+                    </div>
+                </div>
+                <div id="graph-network" class="graph-network"></div>
+            </section>
+        </section>
+
+        <section class="detail-columns">
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">Neighbor records</p>
+                        <h2>Related media</h2>
+                    </div>
+                </div>
+                <div id="related-grid" class="media-grid dense"></div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">Community layer</p>
+                        <h2>Reviews and annotations</h2>
+                    </div>
+                </div>
+                <div id="reviews-list" class="review-list"></div>
+            </section>
+        </section>
+    </main>
+
+    <footer class="page-footer">
+        <div>
+            <strong>{{ app_name }}</strong>
+            <p>Built for connected, metadata-rich media discovery.</p>
+        </div>
+        <div class="footer-meta">
+            <span>Relationship-aware detail pages</span>
+            <span>Outbound access links</span>
+            <span>Archive-safe design philosophy</span>
+        </div>
+    </footer>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Universal Media Archive is a preservation-first media discovery platform spanning film, books, shows, music, games, comics, and video.">
+    <title>{{ app_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body data-page="home">
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-kicker">Preservation-first media index</span>
+            <strong>{{ app_name }}</strong>
+        </a>
+        <nav class="topnav" aria-label="Primary">
+            <a href="#collections-section">Collections</a>
+            <a href="#catalog-section">Catalog</a>
+            <a href="#analytics-section">Analytics</a>
+        </nav>
+        <div class="topbar-actions">
+            <span class="policy-note">Discovery, metadata, and outbound links only. No copyrighted files are hosted here.</span>
+            <button id="archive-toggle" class="toggle-button" type="button" aria-pressed="false">Archive Mode</button>
+        </div>
+    </header>
+
+    <main class="shell">
+        <section class="hero-grid">
+            <article class="hero-copy panel surface-display">
+                <p class="eyebrow">A connected archive for human media</p>
+                <h1>Search the shelf, not the silo.</h1>
+                <p class="hero-text">
+                    Universal Media Archive is designed like an editorial reading room for the modern media web:
+                    richly indexed, preservation-minded, and built around relationships instead of isolated catalogs.
+                </p>
+                <div class="hero-actions">
+                    <a class="hero-link primary-link" href="#catalog-section">Browse the catalog</a>
+                    <a class="hero-link secondary-link" href="#collections-section">Open curated shelves</a>
+                </div>
+                <div id="active-filters" class="active-filter-list"></div>
+            </article>
+
+            <div class="hero-side">
+                <article id="spotlight-panel" class="panel spotlight-panel">
+                    <div class="loading-state">Preparing archive spotlight...</div>
+                </article>
+
+                <form id="search-form" class="panel search-panel">
+                    <div class="panel-heading compact-heading">
+                        <div>
+                            <p class="panel-kicker">Universal search</p>
+                            <h2>Explore the full archive</h2>
+                        </div>
+                        <button id="clear-filters" class="secondary-button" type="button">Reset filters</button>
+                    </div>
+
+                    <label class="search-label" for="search-input">Search title, tag, genre, or theme</label>
+                    <div class="search-row">
+                        <input id="search-input" name="q" type="search" placeholder='Try "cyberpunk", "adaptation", or "Outer Wilds"'>
+                        <button type="submit">Search</button>
+                    </div>
+
+                    <div class="filter-row">
+                        <select id="type-filter" name="type">
+                            <option value="">All types</option>
+                        </select>
+                        <select id="genre-filter" name="genre">
+                            <option value="">All genres</option>
+                        </select>
+                        <select id="year-filter" name="year">
+                            <option value="">All years</option>
+                        </select>
+                        <select id="sort-filter" name="sort">
+                            <option value="recent">Recently added</option>
+                            <option value="trending">Trending</option>
+                            <option value="release_year">Newest release year</option>
+                            <option value="title">Title A-Z</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-row">
+                        <select id="tag-filter" name="tag">
+                            <option value="">All tags</option>
+                        </select>
+                        <select id="platform-filter" name="platform">
+                            <option value="">All platforms</option>
+                        </select>
+                    </div>
+
+                    <p id="catalog-status" class="catalog-status">Search and browse across every media format in the archive.</p>
+                </form>
+            </div>
+        </section>
+
+        <section id="metrics-strip" class="stats-strip"></section>
+
+        <section class="control-deck panel">
+            <div class="control-deck-row">
+                <div class="category-tabs" id="category-tabs">
+                    <button class="tab-button active" data-type="">All Media</button>
+                    <button class="tab-button" data-type="movie">Movies</button>
+                    <button class="tab-button" data-type="show">Shows</button>
+                    <button class="tab-button" data-type="book">Books</button>
+                    <button class="tab-button" data-type="comic">Comics</button>
+                    <button class="tab-button" data-type="song">Songs</button>
+                    <button class="tab-button" data-type="game">Games</button>
+                    <button class="tab-button" data-type="video">Videos</button>
+                </div>
+                <div class="time-capsule">
+                    <span class="capsule-label">Time Capsule</span>
+                    <div id="decade-chips" class="chip-row"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="formats-section" class="panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="panel-kicker">Coverage map</p>
+                    <h2>Explore by format</h2>
+                </div>
+            </div>
+            <div id="format-grid" class="format-grid"></div>
+        </section>
+
+        <section id="collections-section" class="panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="panel-kicker">Curated archive shelves</p>
+                    <h2>Editorial collections</h2>
+                </div>
+            </div>
+            <div id="collections-grid" class="collection-grid"></div>
+        </section>
+
+        <section class="content-grid">
+            <div class="main-column">
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Featured right now</p>
+                            <h2>Trending across the archive</h2>
+                        </div>
+                    </div>
+                    <div id="trending-grid" class="media-grid"></div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Fresh intake</p>
+                            <h2>Recently cataloged media</h2>
+                        </div>
+                    </div>
+                    <div id="recent-grid" class="media-grid dense"></div>
+                </section>
+
+                <section id="catalog-section" class="panel">
+                    <div class="panel-heading split-heading">
+                        <div>
+                            <p class="panel-kicker">Universal catalog</p>
+                            <h2 id="results-title">Browse the full archive</h2>
+                        </div>
+                        <div id="pagination" class="pagination">
+                            <button id="prev-page" type="button">Previous</button>
+                            <span id="page-label">Page 1</span>
+                            <button id="next-page" type="button">Next</button>
+                        </div>
+                    </div>
+                    <div id="results-grid" class="media-grid"></div>
+                    <p id="results-meta" class="meta-inline"></p>
+                </section>
+            </div>
+
+            <aside class="side-column">
+                <section class="panel sidebar-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Personalized browsing</p>
+                            <h2>Recommendation engine</h2>
+                        </div>
+                    </div>
+                    <label class="field-label" for="user-select">Demo user profile</label>
+                    <select id="user-select">
+                        <option value="">Trending only</option>
+                    </select>
+                    <div id="recommendations-grid" class="stacked-list"></div>
+                </section>
+
+                <section id="analytics-section" class="panel sidebar-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Archive analytics</p>
+                            <h2>Coverage snapshot</h2>
+                        </div>
+                    </div>
+                    <div class="breakdown-block">
+                        <strong>Top genres</strong>
+                        <div id="genre-breakdown" class="breakdown-list"></div>
+                    </div>
+                    <div class="breakdown-block">
+                        <strong>Top platforms</strong>
+                        <div id="platform-breakdown" class="breakdown-list"></div>
+                    </div>
+                    <div class="breakdown-block">
+                        <strong>Media mix</strong>
+                        <div id="type-breakdown" class="breakdown-list"></div>
+                    </div>
+                </section>
+
+                <section class="panel sidebar-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Recent annotations</p>
+                            <h2>Latest archive notes</h2>
+                        </div>
+                    </div>
+                    <div id="recent-reviews" class="review-feed"></div>
+                </section>
+
+                <section class="panel sidebar-panel note-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Preservation notes</p>
+                            <h2>Designed for density, not clutter</h2>
+                        </div>
+                    </div>
+                    <p>
+                        Archive Mode compresses the interface into a flatter reading surface for catalog-heavy browsing.
+                        The standard mode stays more editorial and navigational, so both deep research and casual discovery
+                        feel supported.
+                    </p>
+                    <ul class="note-list">
+                        <li>Unified schema for all supported media formats</li>
+                        <li>Knowledge-graph relationships between items</li>
+                        <li>External source linking instead of hosted copyrighted media</li>
+                    </ul>
+                </section>
+            </aside>
+        </section>
+    </main>
+
+    <footer class="page-footer">
+        <div>
+            <strong>{{ app_name }}</strong>
+            <p>A preservation-first archive index for discovery, research, and connected browsing.</p>
+        </div>
+        <div class="footer-meta">
+            <span>FastAPI + MongoDB</span>
+            <span>Deploy-ready runtime included</span>
+            <span>Metadata-rich, link-out architecture</span>
+        </div>
+    </footer>
+
+    <div id="toast" class="toast" aria-live="polite"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

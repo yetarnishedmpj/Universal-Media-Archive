@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: universal-media-archive
+    env: docker
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: ENABLE_DOCS
+        value: true
+      - key: SEED_ON_STARTUP
+        value: false
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: universal_media_archive
